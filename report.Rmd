@@ -1,0 +1,469 @@
+---
+title: "Finding Biomarkers of Biological Age"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-04-30"
+---
+# Introduction
+
+## Background
+
+Biological Age can be thought of as a measure of how well an individual's physiological systems are functioning. In a way, it is the "age of your cells" as opposed to your chronological age from your date of birth. Biological age may be a better predictor of health than chronological age and so the ability to quantify biological age would allow for more effective implementation of age-related interventions and better prediction of age-related conditions. As such, we wish to identify potential biomarkers in the blood that could act as predictors of biological age. 
+
+## Data
+
+The dataset we are using is titled ["Health Test by Blood"](https://www.kaggle.com/datasets/simaanjali/diabetes-classification-dataset) and contains cardiovascular and kidney function information from 5132 patients. There are 11 variables in the dataset including:
+
+* Age: age in years of participants
+* Gender: M or F
+* BMI
+* Chol: Cholesterol levels (mmol/L)
+* TG: Triglyceride levels (mmol/L). Triglycerides are a type of fat found in the blood. High levels can increase the risk of heart disease.
+* HDL: High-density lipoproteins (mmol/L). This is the "good" cholesterol in your blood. High levels indicate good heart health.
+* LDL: Low-density lipoproteins (mmol/L). This is the "bad cholesterol in your blood. 
+* Cr: Creatinine (mmol/L). Creatinine is a waste product from muscle metabolism and a measure of kidney function.
+* BUN: Blood urea nitrogen (mmol/L). A measure of urea nitrogen levels in the blood that is an indicator of kidney and liver function.
+* Diagnosis: Type II Diabetes Diagnosis (1:Yes or 0:No)
+
+There was no missing data in this dataset. There was 1 observation where the gender was marked "f" instead of the capital "F". We believe this was a data entry error and recode this as "F".
+
+## Study Aims
+
+While our primary goal was to find biomarkers to predict biological age we do not have a measure of this available in our dataset. As a result, we use chronological age in our model development and training. We wish to first build up this framework for quantifying feature importance using Lasso regression and machine learning methods to identify some potential blood biomarkers as a starting point. When there is biological age data available our framework can be easily applied to this new data, refined, and the biomarkers can be compared.
+
+## Exploratory Data Analysis
+
+```{r echo=FALSE, include = FALSE}
+#load necessary packages
+library(tidyverse)
+library(GGally)
+library(corrplot)
+library(gridExtra)
+library(ggfortify)
+library(vtable)
+library(viridis)
+library(caret)
+library(randomForest)
+library(gbm)
+library(tidyr)
+
+#read in data
+
+diabetes <- read.csv("Diabetes_Classification.csv")
+
+```
+
+```{r echo = FALSE}
+#find incorrectly defined gender value
+diabetes[which(diabetes$Gender == "f"),"Gender"]="F"
+
+#change gender and diagnosis into factors
+diabetes$Gender <- as.factor(diabetes$Gender)
+diabetes$Diagnosis <- factor(diabetes$Diagnosis,
+                                levels = c(0, 1),
+                                labels = c("No", "Yes"))
+#rename X column as ID
+names(diabetes)[names(diabetes) == 'X'] <- 'ID'
+
+#Create an Age Category variable with 5 categories spanning age 20-95
+diabetes$AgeCat = ifelse(diabetes$Age < 35, "[20,35)", ifelse(diabetes$Age >= 35 & diabetes$Age < 50, "[35,50)", ifelse(diabetes$Age>=50 & diabetes$Age<65, "[50,65)", ifelse(diabetes$Age >=65 & diabetes$Age<80,  "[65,80)",  "[80,95)"))))
+diabetes$AgeCat = as.factor(diabetes$AgeCat)
+
+#see summary statistics of dataset
+st(diabetes[,-1])
+```
+
+Above we have a table with summary statistics of all variables in our dataset. We created an age category variable spanning ages 20-95 with 5 categories of length 15 years each. 
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+#Examine distributions of variables:
+p1 <- ggplot(diabetes, aes(x = Age)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p2 <- ggplot(diabetes, aes(x = BMI)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p3 <- ggplot(diabetes, aes(x = Chol)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p4 <- ggplot(diabetes, aes(x = TG)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p5 <- ggplot(diabetes, aes(x = HDL)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p6 <- ggplot(diabetes, aes(x = LDL)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p7 <- ggplot(diabetes, aes(x = Cr)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p8 <- ggplot(diabetes, aes(x = BUN)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3)
+```
+
+Above we have plots of the densities of each continuous variable. We see that most variables appear to be fairly normally distributed with some variables like Cr and TG having a few very large entries. Upon investigation these entries are not outside the realm of possible values and thus we keep them in our dataset.
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+#correlation plot
+M = cor(diabetes[,c(2,4:10)])
+corrplot(M, method = "number", type = "upper")
+```
+
+Above is a correlation plot of the variables in our dataset. Generally, there does not seem to be much correlation among the different values. We note that LDL is mildly correlated with both Cholesterol and HDL, but HDL does not appear to be correlated with Cholesterol. 
+
+
+```{r echo = FALSE, message = F, warning = F}
+#create plots of age vs mean values of other variables
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(BMI))
+
+p1 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean BMI", title = "Age vs. BMI") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(Chol))
+
+p2 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean Cholesterol", title = "Age vs. Cholesterol") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(TG))
+
+p3 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean BMI", title = "Age vs. TG") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(HDL))
+
+p4 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean HDL", title = "Age vs. HDL") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(LDL))
+
+p5 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean HDL", title = "Age vs. LDL") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(Cr))
+
+p6 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean Creatinine", title = "Age vs. Creatinine") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(BUN))
+
+p7 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean HDL", title = "Age vs. BUN") +
+  theme_bw()
+
+grid.arrange(p1,p2,p3,p4,p5,p6,p7, nrow = 3, ncol = 3)
+```
+
+Now above we have plots age against mean values of each of our variables. All variables appear to have a positive association with age with most notably Cholesterol, Triglycerides, and BUN having the greatest apparent association.
+
+```{r echo = FALSE, message = FALSE}
+
+#Count number of participants in each age category for each gender
+gender_tib = diabetes %>% 
+  group_by(Gender, AgeCat) %>%
+  summarize(count = n()) 
+
+#Calculate percentages
+f_tot <- sum(diabetes$Gender== "F")
+m_tot <- sum(diabetes$Gender == "M")
+gender_tib$per= c(gender_tib$count[1:5]/f_tot *100, gender_tib$count[6:10]/m_tot *100)
+
+#Create pie chart of age categories by Gender
+gender_tib %>%
+  ggplot(aes(x = "", y = per, fill = AgeCat, color = "white")) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(x = 1.6, label = paste0(round(per), "%")), 
+              position = position_stack(vjust = 0.7), color = "black") +
+  facet_grid(. ~ Gender) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = NULL, y = NULL, fill = NULL, color = NULL,
+         title = "Age by Gender")+
+  scale_fill_viridis(discrete = T)+
+  guides(color = "none", fill = guide_legend(title = "Age Category"))+
+  theme_void()
+  
+
+#Create pie chart of age categories by Diabetes diagnosis
+diag_tib = diabetes %>% 
+  group_by(Diagnosis, AgeCat) %>%
+  summarize(count = n()) 
+
+y_tot <- sum(diabetes$Diagnosis == "Yes")
+n_tot <- sum(diabetes$Diagnosis == "No")
+diag_tib$per= c(diag_tib$count[1:5]/n_tot *100, diag_tib$count[6:10]/y_tot *100)
+
+diag_tib %>%
+  ggplot(aes(x = "", y = per, fill = AgeCat, color = "white")) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(x = 1.6, label = paste0(round(per), "%")), 
+              position = position_stack(vjust = 0.7), color = "black") +
+  facet_grid(. ~ Diagnosis) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = NULL, y = NULL, fill = NULL, color = NULL,
+         title = "Age by Diagnosis")+
+  scale_fill_viridis(discrete = T)+
+  guides(color = "none", fill = guide_legend(title = "Age Category"))+
+  theme_void()
+  
+```
+
+Above are 2 figures with pie charts. The first figure depicts the age makeup of the female and male participants. The percentages of participants in each age category look very similar across the two gender in the dataset. The second figure is the age makeup of the participants with and without a diabetes diagnosis. Here, we note that participants with diabetes tend to be much older
+
+
+# Methods
+
+In this project, linear regression with L1 penalty and two machine learning methods (Random Forest and Gradient Boosting Machine) are used to analyze the importance of features in predicting age.
+
+## Lasso Regression
+
+We first implemented from scratch a linear regression with L1 penalty using coordinate descent and soft-thresholding.
+
+ The objective function to minimize for Lasso Regression is:
+$\frac{1}{2n} \sum_{i=1}^{n} (y_i - \beta_0 - \sum_{j=1}^{p} \beta_j x_{ij})^2 + \lambda \sum_{j=1}^{p} |\beta_j|$
+where $\lambda$ is the hyperparameter for L1 penalty, $n$ is the number of observations, $p$ is the number of features, $y_i$ is the response age for the $i$-th observation, $x_{ij}$ is the value of the $j$-th feature for the $i$-th observation, and $\beta_j$ is the coefficient of the $j$-th feature. The Iterative Shrinkage Thresholding Algorithm (ISTA) and coordinate descent are used for the estimation procedure, which is essentially updating each coefficient using the proximal gradient descent for the objective function.
+
+Since LASSO can effectively perform feature selection by setting some coefficients to exactly zero, it is very helpful in identifying the most important features for predicting age.
+
+To get the feature importance scores in Lasso Regression analogous to the machine learning methods, we used bootstrap for statistical inference. 500 bootstrap samples were generated from the training data and Lasso Regression is fitted on each sample to obtain the coefficients. The importance score of each feature was calculated as the proportion of times it was nonzero across all bootstrap samples. Features with higher importance scores, i.e. those more frequently selected, are considered more important in the Lasso regression. The lasso_bootstrap_inference function was used to perform the bootstrap inference. It returns the probability of each feature being selected in the Lasso model across the bootstrap samples as described above.
+
+
+## Random Forest (RF)
+
+Random Forest is an ensemble method that combines multiple decision trees to make predictions. The predictions of each tree are averaged to obtain the final prediction. It is a robust machine learning algorithm that is compatible with continuous outcome with both continuous and discrete inputs. It also provides a measure of feature importance based on the decrease in impurity, which could help identify important features for age prediction. Specifically, the decrease in impurity (Gini impurity by default) when splitting on that feature is used to determine the importance of each feature. Features with higher importance scores are considered more important in the Random Forest model. We used the `caret` package in R to train the Random Forest model. The do_rf_v2 function from the package was used to fit the model with the default tuning procedure. 
+
+## Gradient Boosting Machine (GBM)
+
+Gradient Boosting Machine is another ensemble method that builds an additive model of weak learners, in this case, decision trees. It is also a robust machine learning algorithm providing a measure of feature importance based on the improvement in model performance. Specifically, the improvement in the model's performance attributable to each feature is measured to calculate the feature importance scores in GBM. Features with higher importance scores are considered more important in the GBM model. We used the `gbm` package in R to train the GBM model. The do_gbm_v2 function from the package was used to fit the model. 
+
+
+## Comparison of Feature Importance Scores
+
+To compare the feature importance scores across the different models, we ranked the features based on their importance scores from each model dnd then compared the rankings to identify features that are important across the models. It is noteworthy that given the variable selection property of LASSO, the lasso regression feature importance scores have exact zeros, which is rarely the case in machine learning algorithms.
+
+After obtaining the feature importance scores from each model, we identified the top features with the highest scores for each approach. We then refitted the three models using only those top features and used them to predict age in the test set. Model performance was assessed by comparing metrics such as mean squared error (MSE), mean absolute error (MAE), prediction R squared in the training set (R2_training), and prediction R squared in the test set (R2_test) as they are good measures of the models' predictive accuracy and generalization ability.
+
+
+
+## Results
+
+To establish our models, we initially partitioned the complete data into a 75% training set and a 25% test set. This data splitting was executed by creating an index denoting whether the subject being in the training set using `rbinom()` function, with a probability of 1 set to 0.75. Subsequently, we corrected the gender classification for an individual erroneously labeled as "f", which should have been "F" to indicate female gender. Furthermore, we converted both gender and diagnosis variables into factors for the following analysis.
+
+```{r, eval = FALSE, echo = FALSE}
+
+
+# input data
+input_data <- diabetes
+
+# set train and test set
+set.seed(73520244)
+train.index <- rbinom(nrow(input_data), size = 1, prob = 0.75)
+input_data$train_index <- train.index
+
+train_data <- input_data[input_data$train_index == 1,]
+test_data <- input_data[input_data$train_index == 0,]
+
+train_data[which(train_data$Gender == "f"),"Gender"] <- "F"
+
+# convert gender and diagnosis to factor
+train_data$Gender <- factor(train_data$Gender)
+train_data$Diagnosis <- factor(train_data$Diagnosis)
+
+test_data$Gender <- factor(test_data$Gender)
+test_data$Diagnosis <- factor(test_data$Diagnosis)
+```
+
+Upon completing data preparation, we proceeded to construct LASSO, GBM, and random forest models, incorporating all nine features. Codes for model fitting procedure are attached in the following chunk. In order to optimize parameters for GBM, several exploratory tests were conducted to pre-determine the suitable tuning range. The outcomes of these preliminary tests were consolidated into `gbm_tg`. For the random forest model, we employed the default tuning procedure provided by `caret::train`. In the case of the LASSO model, feature importance scores were computed utilizing bootstrap inference as detailed in the method section.
+
+```{r, eval = FALSE, echo = FALSE}
+# LASSO
+result = lasso_bootstrap_inference(X_train,y_train,B = 500)
+final_result = list()
+final_result$feature_score = result$prob_nonzero_1se
+
+# GBM
+gbm_tg <- expand.grid(n.trees=c(70, 75),
+                      interaction.depth=c(5,6,7),
+                      shrinkage=c(0.04,0.05,0.06,0.07),
+                      n.minobsinnode=c(40, 45, 50))
+
+fit_gbm_v2 <- do_gbm_v2(data=train_data, outcome="Age", tg=gbm_tg,
+                        features=c("Gender", "BMI", "Chol", "TG", "HDL", "LDL", "Cr", "BUN", "Diagnosis"))
+
+gbm_scores <- fit_gbm_v2$scores
+gbm_scores <- get_scores(gbm_scores, "gbm")
+
+# random forest
+fit_rf <- do_rf_v2(data=train_data, outcome="Age", 
+                  features=c("Gender", "BMI", "Chol", "TG", "HDL", "LDL", "Cr", "BUN", "Diagnosis"))
+rf_scores <- fit_rf$scores
+rf_scores <- get_scores(rf_scores, "rf")
+
+ml_scores <- merge(rf_scores, gbm_scores, by="Variable")
+
+```
+
+Once training procedure finished, feature importance scores from the three models were obtained. Here, we summary the scores into the following table and figures:
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+## table:
+library(kableExtra)
+
+scores <- data.frame(
+  Variable = c("BMI", "BUN", "Chol", "Cr", "Diagnosis", "Gender", "HDL", "LDL", "TG"),
+  rf = c(40.50657, 53.62181, 47.14433, 42.21500, 100.00000, 0.00000, 35.49968, 41.50583, 55.42293),
+  gbm = c(7.7046593, 15.9079460, 12.3222867, 5.1553134, 100.0000000, 0.7984119, 1.3836989, 0.0000000, 12.0026564),
+  lasso = c(0.634, 1.000, 1.000, 0.000, 1.000, 0.000, 0.000, 0.574, 0.176)
+)
+
+scores %>%
+  kable(format = "latex",
+        digits = 3,
+        caption = "Model Variable Importance Scores") %>%
+  kable_styling(full_width = FALSE, 
+                bootstrap_options = c("striped", "hover", "condensed"))
+
+## plot:
+data_plot <- tidyr::pivot_longer(scores, cols = starts_with(c("rf", "gbm", "lasso")), names_to = "Model", values_to = "Importance")
+
+# rf
+ggplot(data_plot[data_plot$Model == "rf", ], aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Variable Importance - Random Forest", x = "Variable", y = "Importance") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# gbm
+ggplot(data_plot[data_plot$Model == "gbm", ], aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "lightgreen") +
+  labs(title = "Variable Importance - Gradient Boosting Machine", x = "Variable", y = "Importance") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Lasso
+ggplot(data_plot[data_plot$Model == "lasso", ], aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  labs(title = "Variable Importance - LASSO", x = "Variable", y = "Importance") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Based on the feature importance scores provided by each model, we identified the top 5 features with the highest scores for each approach. 
+
+The top 5 features for LASSO model are diabetes diagnosis, cholesterol level, blood urea nitrogen, BMI, low-density lipoproteins levels. For GBM model, these features include diabetes diagnosis, blood urea nitrogen, cholesterol level, triglycerides level, and BMI. For random forest, the top 5 features are diabetes diagnosis, triglycerides level, blood urea nitrogen, cholesterol level, and creatinine level. Notably, diabetes diagnosis, cholesterol level, and blood urea nitrogen consistently appear among the top 5 feature lists across all models, indicating robustness across different methodologies.
+
+Next, we refit the three model using only the top 5 features and employed the newly trained models to predict age in the test set. Model performance were assessed by comparing metrics such as mean squared error (MSE), mean absolute error (MAE), prediction R squared in the training set (R2_training), as well as  prediction R squared in the test set (R2_test). The results summarizing the model performances are presented in the subsequent table.
+
+```{r, eval = FALSE, echo = FALSE}
+# LASSO
+X_top5 = X_train[,c("Diagnosis","BUN","Chol","LDL","BMI")]
+model_top5 = lasso_optimal(X_top5,y_train)
+y_pred = cbind(1,X_target)%*%model$se1_beta
+mse_top5_train = mean((y_target - y_pred)^2)
+mae_top5_train = mean(abs(y_target - y_pred))
+r2_top5_train = (cor(y_target, y_pred)^2)[[1]]
+
+# GBM
+top5_features_gbm <- ml_scores[order(ml_scores$Importance_gbm, decreasing = T),1][1:5]
+fit_gbm_top5 <- do_gbm_v2(data=train_data, outcome="Age", tg=gbm_tg,
+                          features=top5_features_gbm)
+test_data_gbm <- test_data[, ..top5_features_gbm]
+predictions_gbm <- predict(fit_gbm_top5$model, newdata = test_data_gbm)
+R_2_gbm <- (cor(predictions_gbm, test_data$Age))^2
+
+# random forest
+top5_features_rf <- ml_scores[order(ml_scores$Importance_rf, decreasing = T),1][1:5]
+fit_rf_top5 <- do_rf_v2(data=train_data, outcome="Age", 
+                        features=top5_features_rf)
+test_data_rf <- test_data[, ..top5_features_rf]
+predictions_rf <- predict(fit_rf_top5$model, newdata = test_data_rf)
+R_2_rf <- (cor(predictions_rf, test_data$Age))^2
+
+```
+
+```{r, echo = FALSE}
+
+
+performance <- data.frame(
+  Model = c("LASSO", "RandomForest", "GBM"),
+  MSE = c(136.453, 138.319, 128.117),
+  MAE = c(9.226, 9.193, 8.888),
+  R2_training = c(0.308, 0.305, 0.345),
+  R2_test = c(0.332, 0.340, 0.371)
+)
+
+performance %>%
+  kable(format = "latex",
+        digits = 3,
+        caption = "Model Performance Comparison") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+Overall, GBM has best performance compared to the other two models. Random forest and LASSO have comparable performance. Specifically, the LASSO model boasts a smaller MSE and higher R^2 in the training set, whereas the random forest model achieves a smaller MAE and higher R^2 in the test set.
+
+## Conclusion
+
+In this study, we utilized three distinct models, namely LASSO, GBM, and random forest, to predict age based on various clinical features. Through feature importance analysis, we identified key predictors for each model and selected the top 5 features with the highest importance scores. Subsequently, we refined the models by training them solely on these top features and evaluated their performance using metrics such as MSE, MAE, and prediction R squared. Ultimately, our findings highlight the overall better performance of the GBM model, with consistent performance levels observed between random forest and LASSO models.
+
+Both machine learning models shows better prediction behavior, however, the distribution of their feature importance scores display a notable imbalance. This might be caused by both approaches tending to evaluate the importance of features at least more than zero. 
+Conversely, the LASSO model, although exhibits a relatively small prediction score, demonstrates a more balanced distribution of feature importance scores. This is attributed to LASSO's tendency to assign zero importance to uninformative variables.
+
+
+In the future, alternative modeling approaches, such as machine learning models employing SHapley Additive exPlanations (SHAP), and linear models incorporating penalties like Dantzig, MCP, and ENet, could be explored for benchmarking purposes.
+
+Although we managed to obtain a meaningful model, our results could not be used as biomarker as the age in our data set does not accurately represent biological age. Therefore, more appropriate data with individuals' biological age is needed for further justification of out models. Moreover, to enhance the generalizability of our findings, it is imperative to validate and evaluate our framework across different external data sets, rather than relying on only the test set within our study.

@@ -1,0 +1,271 @@
+---
+title: "Diabetes Dataset Exploratory Data Analysis"
+output: html_document
+date: "2024-04-10"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, include = FALSE}
+#load necessary packages
+library(tidyverse)
+library(GGally)
+library(corrplot)
+library(gridExtra)
+library(ggfortify)
+library(vtable)
+library(viridis)
+
+#read in data
+setwd("~/OneDrive - University of North Carolina at Chapel Hill/2nd year/735")
+diabetes <- read.csv("Diabetes_Classification.csv")
+
+```
+
+```{r echo = FALSE}
+#examine data types
+str(diabetes)
+
+#check for NA values
+which(is.na(diabetes))
+
+#find incorrectly defined gender value
+diabetes[which(diabetes$Gender == "f"),"Gender"]="F"
+
+#change gender and diagnosis into factors
+diabetes$Gender <- as.factor(diabetes$Gender)
+diabetes$Diagnosis <- factor(diabetes$Diagnosis,
+                                levels = c(0, 1),
+                                labels = c("No", "Yes"))
+#rename X column as ID
+names(diabetes)[names(diabetes) == 'X'] <- 'ID'
+
+#Create and Age Category variable with 5 categories spanning age 20-95
+diabetes$AgeCat = ifelse(diabetes$Age < 35, "[20,35)", ifelse(diabetes$Age >= 35 & diabetes$Age < 50, "[35,50)", ifelse(diabetes$Age>=50 & diabetes$Age<65, "[50,65)", ifelse(diabetes$Age >=65 & diabetes$Age<80,  "[65,80)",  "[80,95)"))))
+diabetes$AgeCat = as.factor(diabetes$AgeCat)
+
+#see summary statistics of dataset
+summary(diabetes)
+st(diabetes)
+```
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+#Examine distributions of variables:
+p1 <- ggplot(diabetes, aes(x = Age)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p2 <- ggplot(diabetes, aes(x = BMI)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p3 <- ggplot(diabetes, aes(x = Chol)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p4 <- ggplot(diabetes, aes(x = TG)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p5 <- ggplot(diabetes, aes(x = HDL)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p6 <- ggplot(diabetes, aes(x = LDL)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p7 <- ggplot(diabetes, aes(x = Cr)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+p8 <- ggplot(diabetes, aes(x = BUN)) +
+  geom_histogram(aes(y = after_stat(density)), colour="black", fill="white")+
+  geom_density(alpha=.2, fill="#FF6666") +
+  labs(y = "Density")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, nrow = 3, ncol = 3)
+
+ggpairs(diabetes[,-1])
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+#correlation plot
+M = cor(diabetes[,c(2,4:10)])
+corrplot(M, type = "upper")
+```
+
+```{r, include = F}
+ggplot(diabetes) +
+  geom_point(aes(x = Cr, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = HDL, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = LDL, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = Chol, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = BMI, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = TG, y = Age))
+ggplot(diabetes) +
+  geom_point(aes(x = BUN, y = Age))
+ggplot(diabetes) +
+  geom_boxplot(aes(x = Diagnosis, y = Age))
+ggplot(diabetes) +
+  geom_boxplot(aes(x = Gender, y = Age))
+model = lm(Age ~ ., data= diabetes)
+summary(model)
+```
+
+
+```{r echo = FALSE}
+#create plots of age vs mean values of other variables
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(BMI))
+
+p1 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean BMI", title = "Age vs. BMI") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(Chol))
+
+p2 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean Cholesterol", title = "Age vs. Cholesterol") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(TG))
+
+p3 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean TG", title = "Age vs. Triglycerides") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(HDL))
+
+p4 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean HDL", title = "Age vs. HDL") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(LDL))
+
+p5 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean LDL", title = "Age vs. LDL") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(Cr))
+
+p6 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean Creatinine", title = "Age vs. Creatinine") +
+  theme_bw()
+
+tib <- diabetes %>%
+  group_by(Age) %>%
+  summarize(mean = mean(BUN))
+
+p7 <- ggplot(tib, aes(x = mean, y = Age)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Mean BUN", title = "Age vs. Blood Urea Nitrogen") +
+  theme_bw()
+
+grid.arrange(p1,p2,p3,p4,p5,p6,p7, nrow = 3, ncol = 3)
+```
+
+```{r echo = FALSE, message = FALSE}
+
+#Count number of participants in each age category for each gender
+gender_tib = diabetes %>% 
+  group_by(Gender, AgeCat) %>%
+  summarize(count = n()) 
+
+#Calculate percentages
+f_tot <- sum(diabetes$Gender== "F")
+m_tot <- sum(diabetes$Gender == "M")
+gender_tib$per= c(gender_tib$count[1:5]/f_tot *100, gender_tib$count[6:10]/m_tot *100)
+
+#Create pie chart of age categories by Gender
+gender_tib %>%
+  ggplot(aes(x = "", y = per, fill = AgeCat, color = "white")) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(x = 1.6, label = paste0(round(per), "%")), 
+              position = position_stack(vjust = 0.7), color = "black") +
+  facet_grid(. ~ Gender) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = NULL, y = NULL, fill = NULL, color = NULL,
+         title = "Age by Gender")+
+  scale_fill_viridis(discrete = T)+
+  guides(color = "none", fill = guide_legend(title = "Age Category"))+
+  theme_void()
+  
+
+#Create pie chart of age categories by Diabetes diagnosis
+diag_tib = diabetes %>% 
+  group_by(Diagnosis, AgeCat) %>%
+  summarize(count = n()) 
+
+y_tot <- sum(diabetes$Diagnosis == "Yes")
+n_tot <- sum(diabetes$Diagnosis == "No")
+diag_tib$per= c(diag_tib$count[1:5]/n_tot *100, diag_tib$count[6:10]/y_tot *100)
+
+diag_tib %>%
+  ggplot(aes(x = "", y = per, fill = AgeCat, color = "white")) +
+  geom_bar(stat = "identity") +
+  coord_polar("y", start = 0) +
+  geom_text(aes(x = 1.6, label = paste0(round(per), "%")), 
+              position = position_stack(vjust = 0.7), color = "black") +
+  facet_grid(. ~ Diagnosis) +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  labs(x = NULL, y = NULL, fill = NULL, color = NULL,
+         title = "Age by Diagnosis")+
+  scale_fill_viridis(discrete = T)+
+  guides(color = "none", fill = guide_legend(title = "Age Category"))+
+  theme_void()
+  
+```
+
+```{r}
+#PCA
+pca_diab <- prcomp(M)
+summary(pca_diab)
+
+screeplot(pca_diab)
+biplot(pca_diab)
+
+```
+
